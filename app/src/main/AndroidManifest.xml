@@ -1,17 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-	xmlns:tools="http://schemas.android.com/tools"
-	package="com.kieronquinn.app.darq">
+	xmlns:tools="http://schemas.android.com/tools">
 
 	<uses-permission android:name="android.permission.INTERNET"/>
 	<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-	<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-	<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-	<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 	<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
 		tools:ignore="QueryAllPackagesPermission" />
 	<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+	<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
 	<application
 		android:name=".DarqApplication"
@@ -40,8 +37,9 @@
 			android:name="com.google.android.gms.oss.licenses.OssLicensesActivity"
 			android:theme="@style/AppTheme.ThirdPartyLicences" />
 
-		<service android:name="com.kieronquinn.app.darq.service.boot.BootForegroundService"/>
-		<service android:name="com.kieronquinn.app.darq.service.autodark.DarqAutoDarkForegroundService"/>
+		<service android:name="com.kieronquinn.app.darq.service.boot.BootForegroundService"
+			android:exported="false"
+			android:foregroundServiceType="shortService" />
 
 		<receiver android:name="com.kieronquinn.app.darq.receivers.BootReceiver"
 			android:exported="false">

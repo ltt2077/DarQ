@@ -1,6 +1,6 @@
 package com.kieronquinn.app.darq.ui.screens.container
 
-import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.os.Bundle
 import android.util.TypedValue
@@ -22,7 +22,7 @@ import com.kieronquinn.app.darq.components.settings.DarqSharedPreferences
 import com.kieronquinn.app.darq.databinding.FragmentContainerBinding
 import com.kieronquinn.app.darq.model.darq.DarqConstants
 import com.kieronquinn.app.darq.providers.DarqServiceConnectionProvider
-import com.kieronquinn.app.darq.service.autodark.DarqAutoDarkForegroundService
+import com.kieronquinn.app.darq.work.DarqSunriseSunsetWork
 import com.kieronquinn.app.darq.ui.base.*
 import com.kieronquinn.app.darq.utils.extensions.*
 import com.kieronquinn.monetcompat.extensions.views.applyMonet
@@ -49,9 +49,15 @@ class ContainerFragment: BoundFragment<FragmentContainerBinding>(FragmentContain
     }
 
     private val navigation by inject<Navigation>()
+    private val shizukuPermissionListener = Shizuku.OnRequestPermissionResultListener { requestCode, result ->
+        if (requestCode == 0 && result == PackageManager.PERMISSION_GRANTED) {
+            viewLifecycleOwnerLiveData.value?.lifecycleScope?.launch { sharedViewModel.loadService() }
+        }
+    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
         setupBackground()
         setupInsets()
         setupToolbar()
@@ -67,6 +73,11 @@ class ContainerFragment: BoundFragment<FragmentContainerBinding>(FragmentContain
                 navigation.navigateBack()
             }
         }
+    }
+
+    override fun onDestroyView() {
+        Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener)
+        super.onDestroyView()
     }
 
     private fun setupBackground(){
@@ -258,6 +269,7 @@ class ContainerFragment: BoundFragment<FragmentContainerBinding>(FragmentContain
 
     private fun setSnackbarState(syncState: ContainerSharedViewModel.SyncState){
         when(syncState){
+            ContainerSharedViewModel.SyncState.NotSyncing -> Unit
             is ContainerSharedViewModel.SyncState.Syncing -> {
                 binding.snackbarRoot.snackbarText.text = getString(R.string.snackbar_syncing_text)
                 binding.snackbarRoot.snackbarAction.isVisible = false
@@ -288,9 +300,7 @@ class ContainerFragment: BoundFragment<FragmentContainerBinding>(FragmentContain
     private fun setupAutoDarkService(){
         lifecycleScope.launchWhenResumed {
             sharedViewModel.autoDarkServiceStartBus.collect {
-                requireContext().startForegroundService(Intent(requireContext(), DarqAutoDarkForegroundService::class.java).apply {
-                    putExtra(DarqAutoDarkForegroundService.KEY_JUST_RESCHEDULE, true)
-                })
+                DarqSunriseSunsetWork.reschedule(requireContext())
             }
         }
     }

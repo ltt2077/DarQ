@@ -3,7 +3,6 @@ package com.kieronquinn.app.darq
 import android.app.Application
 import android.app.DownloadManager
 import android.content.Context
-import android.util.Log
 import com.kieronquinn.app.darq.components.github.UpdateChecker
 import com.kieronquinn.app.darq.components.navigation.Navigation
 import com.kieronquinn.app.darq.components.navigation.NavigationImpl
@@ -37,7 +36,6 @@ import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
-import org.lsposed.hiddenapibypass.HiddenApiBypass
 import rikka.sui.Sui
 
 class DarqApplication : Application() {
@@ -70,10 +68,6 @@ class DarqApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        runCatching {
-            //Allows blurs on some devices, doesn't really matter if it fails
-            HiddenApiBypass.addHiddenApiExemptions("L")
-        }
         Picasso.setSingletonInstance(
             Picasso.Builder(this)
                 .addRequestHandler(AppIconRequestHandler(this))
@@ -83,8 +77,6 @@ class DarqApplication : Application() {
             androidContext(this@DarqApplication)
             modules(serviceModule, appComponentsModule, viewModelsModule, providersModule)
         }
-        val applicationThread = Context::class.java.getMethod("getIApplicationThread").invoke(this as Context)
-        Log.d("DarQA", "ApplicationThread $applicationThread")
         Sui.init(packageName)
         setupMonet()
     }

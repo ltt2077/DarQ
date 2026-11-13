@@ -25,6 +25,7 @@ abstract class DarqSharedPreferences: BaseSharedPreferences() {
 
         private const val KEY_ALWAYS_FORCE_DARK = "always_force_dark"
         private const val DEFAULT_ALWAYS_FORCE_DARK = false
+        private const val KEY_EXPANDED_DARK = "expanded_dark"
 
         private const val KEY_USE_LOCATION = "use_location"
         private const val DEFAULT_USE_LOCATION = false
@@ -51,6 +52,7 @@ abstract class DarqSharedPreferences: BaseSharedPreferences() {
     var sendAppCloses by this.shared(KEY_SEND_APP_CLOSES, DEFAULT_SEND_APP_CLOSES)
     var oxygenForceDark by this.shared(KEY_OXYGEN_FORCE_DARK, DEFAULT_OXYGEN_FORCE_DARK)
     var alwaysForceDark by this.shared(KEY_ALWAYS_FORCE_DARK, DEFAULT_ALWAYS_FORCE_DARK)
+    var expandedDark by this.shared(KEY_EXPANDED_DARK, false)
     var useLocation by this.shared(KEY_USE_LOCATION, DEFAULT_USE_LOCATION)
     var developerOptions by this.shared(KEY_DEVELOPER_OPTIONS, DEFAULT_DEVELOPER_OPTIONS)
     var monetColor by this.shared(KEY_UI_MONET_COLOR, Integer.MAX_VALUE)
@@ -65,6 +67,7 @@ abstract class DarqSharedPreferences: BaseSharedPreferences() {
             KEY_ALWAYS_FORCE_DARK -> IPCSetting(alwaysForceDark = alwaysForceDark)
             KEY_OXYGEN_FORCE_DARK -> IPCSetting(oxygenForceDark = oxygenForceDark)
             KEY_SEND_APP_CLOSES -> IPCSetting(sendAppCloses = sendAppCloses)
+            KEY_ENABLED_APPS, KEY_EXPANDED_DARK -> IPCSetting(enabledAppsChanged = true)
             else -> null
         }
     }

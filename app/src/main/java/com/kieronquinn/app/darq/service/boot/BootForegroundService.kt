@@ -1,11 +1,17 @@
 package com.kieronquinn.app.darq.service.boot
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.os.Build
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.kieronquinn.app.darq.R
@@ -30,14 +36,14 @@ class BootForegroundService : LifecycleService() {
 
     private val launchIntent by lazy {
         Intent(this, DarqActivity::class.java).let { notificationIntent ->
-            PendingIntent.getActivity(this, 0, notificationIntent, 0)
+            PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
         }
     }
 
     private val shizukuLaunchIntent by lazy {
-        Intent(packageManager.getLaunchIntentForPackage(ShizukuConstants.SHIZUKU_PACKAGE_NAME)).let { notificationIntent ->
-            PendingIntent.getActivity(this, 0, notificationIntent, 0)
-        }
+        packageManager.getLaunchIntentForPackage(ShizukuConstants.SHIZUKU_PACKAGE_NAME)?.let { intent ->
+            PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+        } ?: launchIntent
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -59,21 +65,27 @@ class BootForegroundService : LifecycleService() {
                 .setTicker(getText(R.string.boot_foreground_service_notification_content))
                 .build()
 
-        startForeground(NOTIFICATION_ID_STARTUP, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceCompat.startForeground(
+                this, NOTIFICATION_ID_STARTUP, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID_STARTUP, notification)
+        }
 
         lifecycleScope.launchWhenCreated {
-            val result = connectionProvider.getService()
-            if (result.isFailure) {
-                //Failed to start
-                showFailedNotification()
-            } else {
-                if (result is DarqServiceConnectionProvider.ServiceResult.Failed &&
+            try {
+                val result = connectionProvider.getService()
+                if (result.isFailure) {
+                    showFailedNotification()
+                } else if (result is DarqServiceConnectionProvider.ServiceResult.Failed &&
                     result.reason == DarqServiceConnectionProvider.ServiceFailureReason.SHIZUKU_NOT_STARTED) {
                     showShizukuNotification()
                 }
+            } finally {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf(startId)
             }
-            stopForeground(true)
-            stopSelf()
         }
         return super.onStartCommand(intent, flags, startId)
     }
@@ -89,7 +101,7 @@ class BootForegroundService : LifecycleService() {
                 .setStyle(Notification.BigTextStyle().bigText(getString(R.string.boot_foreground_service_notification_failed_content)))
                 .setTicker(getText(R.string.boot_foreground_service_notification_failed_content))
                 .build()
-        notificationManager.notify(NOTIFICATION_ID_STARTUP_FAILED, notification)
+        notifyStartupFailure(notification)
     }
 
     private fun showShizukuNotification() {
@@ -103,7 +115,15 @@ class BootForegroundService : LifecycleService() {
                 .setStyle(Notification.BigTextStyle().bigText(getString(R.string.boot_foreground_service_notification_shizuku_content)))
                 .setTicker(getText(R.string.boot_foreground_service_notification_shizuku_content))
                 .build()
-        notificationManager.notify(NOTIFICATION_ID_STARTUP_FAILED, notification)
+        notifyStartupFailure(notification)
+    }
+
+    private fun notifyStartupFailure(notification: Notification) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationManager.notify(NOTIFICATION_ID_STARTUP_FAILED, notification)
+        }
     }
 
     private val DarqServiceConnectionProvider.ServiceResult.isFailure: Boolean

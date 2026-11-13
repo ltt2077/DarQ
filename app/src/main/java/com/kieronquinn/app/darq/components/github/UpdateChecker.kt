@@ -3,7 +3,7 @@ package com.kieronquinn.app.darq.components.github
 import android.content.Context
 import android.os.Parcelable
 import com.kieronquinn.app.darq.BuildConfig
-import kotlinx.android.parcel.Parcelize
+import kotlinx.parcelize.Parcelize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
@@ -24,21 +24,19 @@ class UpdateChecker {
     }
 
     companion object {
-        private const val BASE_URL = "https://api.github.com/repos/KieronQuinn/DarQ/"
+        private const val BASE_URL = "https://api.github.com/repos/ltt2077/DarQ/"
     }
 
     fun getLatestRelease() = callbackFlow {
         withContext(Dispatchers.IO){
             getReleaseList()?.let { gitHubReleaseResponse ->
                 val currentTag = gitHubReleaseResponse.tagName
-                if (currentTag != null && currentTag != BuildConfig.TAG_NAME) {
+                if (currentTag != null && currentTag.removePrefix("v") != BuildConfig.TAG_NAME) {
                     //New update available!
                     val asset =
                         gitHubReleaseResponse.assets?.firstOrNull { it.name?.endsWith(".apk") == true }
-                    val releaseUrl =
-                        asset?.browserDownloadUrl?.replace("/download/", "/tag/")?.apply {
-                            substring(0, lastIndexOf("/"))
-                        }
+                            ?: return@let
+                    val assetUrl = asset.browserDownloadUrl ?: return@let
                     val name = gitHubReleaseResponse.name ?: run {
                         this@callbackFlow.trySend(null).isSuccess
                         return@let
@@ -56,10 +54,9 @@ class UpdateChecker {
                             name,
                             body,
                             publishedAt,
-                            asset?.browserDownloadUrl
-                                ?: "https://github.com/KieronQuinn/DarQ/releases",
-                            asset?.name ?: "DarQ.apk",
-                            releaseUrl ?: "https://github.com/KieronQuinn/DarQ/releases"
+                            assetUrl,
+                            asset.name ?: "DarQ.apk",
+                            gitHubReleaseResponse.htmlUrl ?: "https://github.com/ltt2077/DarQ/releases"
                         )
                     ).isSuccess
                 }

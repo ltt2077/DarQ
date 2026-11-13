@@ -3,13 +3,14 @@ package com.kieronquinn.app.darq.components.settings
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
-import android.util.Log
 import com.kieronquinn.app.darq.BuildConfig
 import com.kieronquinn.app.darq.model.settings.IPCSetting
 import com.kieronquinn.app.darq.model.xposed.XposedSelfHooks
 import com.kieronquinn.app.darq.utils.extensions.ReadWriteProperty
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -22,6 +23,15 @@ import kotlin.reflect.KProperty
 //These calls are from background threads and need to await changes so commit is required
 @SuppressLint("ApplySharedPref")
 class AppSharedPreferences(context: Context): DarqSharedPreferences() {
+
+    private val writes = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    private val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        writeScope.launch {
+            for (write in writes) write()
+        }
+    }
 
     override val sharedPreferences: SharedPreferences by lazy {
         val prefsFile = "${BuildConfig.APPLICATION_ID}_prefs"
@@ -113,11 +123,13 @@ class AppSharedPreferences(context: Context): DarqSharedPreferences() {
         return object: ReadWriteProperty<Any?, T> {
 
             override operator fun getValue(thisRef: Any?, property: KProperty<*>): T {
-                return java.lang.Enum.valueOf(T::class.java, sharedPreferences.getString(key, default.name))
+                return java.lang.Enum.valueOf(
+                    T::class.java, sharedPreferences.getString(key, default.name) ?: default.name
+                )
             }
 
             override operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
-                GlobalScope.launch(Dispatchers.IO) {
+                runInBackground {
                     sharedPreferences.edit().putString(key, value.name).commit()
                     notifyPrefChange(key)
                 }
@@ -126,18 +138,16 @@ class AppSharedPreferences(context: Context): DarqSharedPreferences() {
         }
     }
 
-    fun notifyPrefChange(key: String){
+    @PublishedApi
+    internal suspend fun notifyPrefChange(key: String) {
         makeWorldReadable()
         val ipcSetting = getIPCSettingForKey(key) ?: return
-        GlobalScope.launch(Dispatchers.IO) {
-            _changed.emit(ipcSetting)
-        }
+        _changed.emit(ipcSetting)
     }
 
-    private fun runInBackground(method: suspend () -> Unit){
-        GlobalScope.launch(Dispatchers.IO) {
-            method.invoke()
-        }
+    @PublishedApi
+    internal fun runInBackground(method: suspend () -> Unit) {
+        writes.trySend(method)
     }
 
     private fun Array<String>.toJSONArray(): JSONArray {

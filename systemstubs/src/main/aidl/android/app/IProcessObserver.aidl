@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 package android.app;
-interface IProcessObserver {
+oneway interface IProcessObserver {
 
+    void onProcessStarted(int pid, int processUid, int packageUid,
+                          String packageName, String processName);
     void onForegroundActivitiesChanged(int pid, int uid, boolean foregroundActivities);
     void onForegroundServicesChanged(int pid, int uid, int serviceTypes);
     void onProcessDied(int pid, int uid);

@@ -1,2 +1,3 @@
+rootProject.name = 'DarQ'
 include ':app'
 include ':systemstubs'

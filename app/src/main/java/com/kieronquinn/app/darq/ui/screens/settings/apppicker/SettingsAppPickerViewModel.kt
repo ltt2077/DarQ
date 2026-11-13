@@ -108,10 +108,10 @@ class SettingsAppPickerViewModelImpl(
                         selected.contains(it.packageName)
                     )
                 }
-            }.sortedBy { it.label.toString().toLowerCase(Locale.getDefault()) }.run {
+            }.sortedBy { it.label.toString().lowercase(Locale.getDefault()) }.run {
                 if (search.isNotEmpty()) filter {
-                    it.label.toString().toLowerCase(Locale.getDefault()).contains(
-                        search.toLowerCase(
+                    it.label.toString().lowercase(Locale.getDefault()).contains(
+                        search.lowercase(
                             Locale.getDefault()
                         )
                     )
@@ -122,19 +122,13 @@ class SettingsAppPickerViewModelImpl(
     }
 
     override fun onPackageEnabledChanged(app: AppPickerItem.App) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val currentSelectedApps = selectedApps.value ?: return@launch
-            if (app.enabled) {
-                if (!currentSelectedApps.contains(app.packageName)) {
-                    currentSelectedApps.add(app.packageName)
-                }
-            } else {
-                if (currentSelectedApps.contains(app.packageName)) {
-                    currentSelectedApps.remove(app.packageName)
-                }
-            }
-            settings.enabledApps = currentSelectedApps.toTypedArray()
+        val currentSelectedApps = selectedApps.value ?: return
+        if (app.enabled) {
+            if (!currentSelectedApps.contains(app.packageName)) currentSelectedApps.add(app.packageName)
+        } else {
+            currentSelectedApps.remove(app.packageName)
         }
+        settings.enabledApps = currentSelectedApps.toTypedArray()
     }
 
     override fun setSearchTerm(searchTerm: String) {

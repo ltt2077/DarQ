@@ -28,7 +28,8 @@ class ShizkuNotRunningBottomSheetFragment: BaseBottomSheetDialogFragment() {
     override fun onPositiveClicked(dialog: BottomSheetDialog) {
         super.onPositiveClicked(dialog)
         val packageManager = requireContext().packageManager
-        startActivity(packageManager.getLaunchIntentForPackage(ShizukuConstants.SHIZUKU_PACKAGE_NAME))
+        packageManager.getLaunchIntentForPackage(ShizukuConstants.SHIZUKU_PACKAGE_NAME)
+            ?.let(::startActivity)
     }
 
     override fun onNegativeClicked(dialog: BottomSheetDialog) {

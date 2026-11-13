@@ -15,6 +15,8 @@
     <string name="item_advanced_options_content">Change settings for always using force dark and app switching</string>
     <string name="item_always_use_force_dark_title">Always use Force Dark</string>
     <string name="item_always_use_force_dark_content">Ignore the list of Force Dark apps and instead have Force Dark <b>always enabled</b>, for all apps.</string>
+    <string name="item_expanded_dark_title">Apply Expanded Dark to selected apps</string>
+    <string name="item_expanded_dark_content">Uses Android 17’s Expanded dark theme on supported devices. Enable Expanded in Android’s dark theme settings first.</string>
     <string name="item_send_app_closes_title">Listen for App Closes</string>
     <string name="item_send_app_closes_content">Disables Force Dark when an app in the Force Dark list is closed. This leads to more instances where Force Dark may not be applied quickly enough to an app when switching between apps.</string>
     <string name="item_header_about">About</string>

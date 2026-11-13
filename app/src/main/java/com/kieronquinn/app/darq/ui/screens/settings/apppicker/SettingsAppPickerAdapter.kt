@@ -49,9 +49,10 @@ class SettingsAppPickerAdapter(
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        val item = items[holder.adapterPosition]
+        val item = items[position]
         when(holder){
             is ViewHolder.ItemAppViewHolder -> setupApp(holder.binding, item as AppPickerItem.App)
+            is ViewHolder.ItemSnackbarPaddingViewHolder -> Unit
         }
     }
 

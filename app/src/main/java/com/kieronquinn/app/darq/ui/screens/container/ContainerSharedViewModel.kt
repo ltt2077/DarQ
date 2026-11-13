@@ -1,7 +1,7 @@
 package com.kieronquinn.app.darq.ui.screens.container
 
 import android.content.Context
-import android.os.DeadObjectException
+import android.os.RemoteException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kieronquinn.app.darq.R
@@ -15,7 +15,6 @@ import com.kieronquinn.app.darq.utils.extensions.secureSettingIntFlow
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
-import java.util.*
 import kotlin.reflect.KSuspendFunction0
 
 abstract class ContainerSharedViewModel: ViewModel() {
@@ -43,7 +42,7 @@ abstract class ContainerSharedViewModel: ViewModel() {
 
     sealed class SyncState {
         object NotSyncing: SyncState()
-        data class Syncing(val syncQueue: Queue<IPCSetting>): SyncState()
+        object Syncing : SyncState()
         data class SyncComplete(val success: Boolean): SyncState()
     }
 
@@ -97,9 +96,7 @@ class ContainerSharedViewModelImpl(context: Context, private val serviceProvider
     private val _loadingState = MutableStateFlow<ServiceState>(ServiceState.Idle).apply {
         viewModelScope.launch {
             collect {
-                when(it){
-                    is ServiceState.Loading -> loadService()
-                }
+                if (it is ServiceState.Loading) loadService()
             }
         }
     }
@@ -123,37 +120,27 @@ class ContainerSharedViewModelImpl(context: Context, private val serviceProvider
 
     override val loadingState = _loadingState.asSharedFlow()
 
-    private val _syncState = MutableStateFlow<SyncState>(SyncState.NotSyncing).apply {
+    private val pendingSync = Channel<IPCSetting>(Channel.UNLIMITED)
+    private val _syncState = MutableStateFlow<SyncState>(SyncState.NotSyncing)
+
+    init {
         viewModelScope.launch {
-            collect {
-                handleLocalSyncChanges(it)
-            }
-        }
-    }
-
-    private var syncCompleteTimeoutJob: Job? = null
-
-    private suspend fun MutableStateFlow<SyncState>.handleLocalSyncChanges(syncState: SyncState) {
-        if(syncState is SyncState.SyncComplete){
-            syncCompleteTimeoutJob = viewModelScope.launch {
-                delay(TIMEOUT_SYNC_COMPLETE)
-                if(value is SyncState.SyncComplete){
-                    syncCompleteTimeoutJob = null
-                    emit(SyncState.NotSyncing)
+            var resetStatus: Job? = null
+            for (setting in pendingSync) {
+                resetStatus?.cancel()
+                _syncState.value = SyncState.Syncing
+                val success = withContext(Dispatchers.IO) { syncItem(setting) }
+                _syncState.value = SyncState.SyncComplete(success)
+                resetStatus = launch {
+                    delay(TIMEOUT_SYNC_COMPLETE)
+                    _syncState.value = SyncState.NotSyncing
                 }
             }
-        }else syncCompleteTimeoutJob?.cancelAndJoin()
-        if(syncState is SyncState.Syncing){
-            runSync()
         }
     }
 
     override fun queueIPCSync(ipcSetting: IPCSetting) {
-        viewModelScope.launch(Dispatchers.IO) {
-            (_syncState.value as? SyncState.Syncing)?.syncQueue?.add(ipcSetting) ?: run {
-                startSyncing(ipcSetting)
-            }
-        }
+        pendingSync.trySend(ipcSetting)
     }
 
     override suspend fun killOtherInstances(): Boolean {
@@ -163,30 +150,10 @@ class ContainerSharedViewModelImpl(context: Context, private val serviceProvider
             try {
                 service.service.killOtherInstances()
                 true
-            }catch (e: DeadObjectException){
+            }catch (e: RemoteException){
                 false
             }
         }else false
-    }
-
-    private suspend fun startSyncing(ipcSetting: IPCSetting){
-        _syncState.emit(SyncState.Syncing(ArrayDeque<IPCSetting>().apply {
-            add(ipcSetting)
-        }))
-    }
-
-    private suspend fun runSync(){
-        var syncSuccess = true
-        while(true){
-            val syncQueue = (_syncState.value as? SyncState.Syncing)?.syncQueue ?: break
-            if(syncQueue.size == 0) break
-            val result = syncItem(syncQueue.remove())
-            if(!result){
-                syncSuccess = false
-                break
-            }
-        }
-        _syncState.emit(SyncState.SyncComplete(syncSuccess))
     }
 
     private suspend fun syncItem(ipcSetting: IPCSetting): Boolean {
@@ -194,9 +161,15 @@ class ContainerSharedViewModelImpl(context: Context, private val serviceProvider
         val service = serviceCall.serviceCall.invoke()
         return if(service is DarqServiceConnectionProvider.ServiceResult.Success){
             try {
-                service.service.notifySettingsChange(ipcSetting)
-                true
-            }catch (e: DeadObjectException){
+                if (ipcSetting.enabledAppsChanged) {
+                    serviceProvider.syncEnabledApps(service.service)
+                } else {
+                    service.service.notifySettingsChange(ipcSetting)
+                }
+                if (ipcSetting.enabledAppsChanged || ipcSetting.enabled != null) {
+                    serviceProvider.syncExpandedDark(service.service)
+                } else true
+            }catch (e: RemoteException){
                 false
             }
         }else false

@@ -46,6 +46,7 @@ class UpdateDownloadBottomSheetFragment: BaseBottomSheetFragment<FragmentBottomS
         lifecycleScope.launch {
             updateViewModel.downloadState.collect {
                 when(it){
+                    UpdateDownloadBottomSheetViewModel.State.Idle -> Unit
                     is UpdateDownloadBottomSheetViewModel.State.Downloading -> {
                         if(it.progress > 0) {
                             binding.fragmentUpdateDownloadProgress.isIndeterminate = false

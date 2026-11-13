@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kieronquinn.app.darq.BuildConfig
@@ -56,18 +57,15 @@ class UpdateDownloadBottomSheetViewModelImpl(private val downloadManager: Downlo
 
     private val downloadStateReceiver = object: BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent?) {
+            val id = requestId ?: return
+            if (intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != id) return
             viewModelScope.launch {
-                var success = false
-                val query = DownloadManager.Query().apply {
-                    setFilterById(requestId ?: return@apply)
-                }
-                val cursor = downloadManager.query(query)
-                if (cursor.moveToFirst()) {
-                    val columnIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-                    if (cursor.getInt(columnIndex) == DownloadManager.STATUS_SUCCESSFUL) {
-                        success = true
-                    }
-                }
+                val query = DownloadManager.Query().setFilterById(id)
+                val success = downloadManager.query(query)?.use { cursor ->
+                    cursor.moveToFirst() &&
+                        cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) ==
+                        DownloadManager.STATUS_SUCCESSFUL
+                } == true
                 if (success && downloadFile != null) {
                     val outputUri = FileProvider.getUriForFile(context, BuildConfig.APPLICATION_ID + ".provider", downloadFile!!)
                     _downloadState.emit(State.Done(outputUri))
@@ -80,7 +78,6 @@ class UpdateDownloadBottomSheetViewModelImpl(private val downloadManager: Downlo
 
     override fun openPackageInstaller(context: Context, uri: Uri){
         Intent(Intent.ACTION_VIEW, uri).apply {
-            putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
             setDataAndType(uri, "application/vnd.android.package-archive")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -116,7 +113,10 @@ class UpdateDownloadBottomSheetViewModelImpl(private val downloadManager: Downlo
             mkdirs()
         }
         downloadFile = File(downloadFolder, fileName)
-        context.registerReceiver(downloadStateReceiver, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
+        ContextCompat.registerReceiver(
+            context, downloadStateReceiver, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+            ContextCompat.RECEIVER_EXPORTED
+        )
         context.contentResolver.registerContentObserver(Uri.parse("content://downloads/my_downloads"), true, downloadObserver)
         requestId = DownloadManager.Request(Uri.parse(url)).apply {
             setDescription(context.getString(R.string.download_manager_description))

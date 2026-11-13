@@ -1,23 +1,24 @@
 package com.kieronquinn.app.darq.service.impl
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.app.IActivityManager
 import android.app.IProcessObserver
 import android.app.IUiModeManager
+import android.app.UiModeManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.content.res.Resources
-import android.location.ILocationManager
-import android.location.Location
+import android.location.LocationManager
+import android.os.Binder
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ServiceLifecycleDispatcher
-import androidx.lifecycle.lifecycleScope
+import android.os.RemoteException
+import android.os.UserHandle
+import android.util.Log
 import com.kieronquinn.app.darq.BuildConfig
 import com.kieronquinn.app.darq.IDarqService
 import com.kieronquinn.app.darq.model.location.LatLng
@@ -27,42 +28,31 @@ import com.kieronquinn.app.darq.model.shizuku.ShizukuConstants
 import com.kieronquinn.app.darq.providers.DarqServiceConnectionProvider
 import com.kieronquinn.app.darq.utils.SystemProperties
 import com.topjohnwu.superuser.internal.Utils
-import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
 import rikka.shizuku.SystemServiceHelper
-import kotlin.streams.toList
 import kotlin.system.exitProcess
 
 
 @SuppressLint("RestrictedApi")
-class DarqService(private val serviceType: DarqServiceConnectionProvider.ServiceType = DarqServiceConnectionProvider.ServiceType.SHIZUKU) : IDarqService.Stub(), LifecycleOwner {
+class DarqService(private val serviceType: DarqServiceConnectionProvider.ServiceType = DarqServiceConnectionProvider.ServiceType.SHIZUKU) : IDarqService.Stub() {
 
     companion object {
         private const val TAG = "DarQService"
         private const val FORCE_DARK_PROP = "debug.hwui.force_dark"
         private const val OXYGEN_OS_WORLD_FORCE_DARK = "op_force_dark_entire_world"
         private const val OXYGEN_OS_AOSP_FORCE_DARK = "aosp_force_dark_mode"
+        private const val EXPANDED_DARK_PACKAGES =
+            "accessibility_force_invert_color_override_packages_to_enable"
         private const val SHIZUKU_SERVICE_ID = "${BuildConfig.APPLICATION_ID}:${ShizukuConstants.SERVICE_NAME}"
         private const val ROOT_SERVICE_ID = "${BuildConfig.APPLICATION_ID}:${RootConstants.SERVICE_NAME}"
     }
 
-    private var isEnabled = true
-    private var isAlwaysForceDarkEnabled = false
-    private var isOxygenForceDarkEnabled = false
-    private val appWhitelist = emptySet<String>().toMutableSet()
-    private var tempAppList = emptyList<String>().toMutableList()
-    private var currentApp = MutableStateFlow<String?>(null)
-
-    private val mDispatcher by lazy {
-        ServiceLifecycleDispatcher(this)
-    }
-
-    override fun getLifecycle(): Lifecycle {
-        return mDispatcher.lifecycle
-    }
-
-    //Whether to send `null` when an app is closed and no new one is opened (causes more incorrect Force Dark changes)
-    private var sendAppCloses = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val forceDarkState = ForceDarkState()
+    private val pendingWhitelist = mutableSetOf<String>()
+    private var observerRegistered = false
+    private var lastForceDarkWrite: Boolean? = null
+    private val startedProcesses = mutableMapOf<Int, String>()
+    private val expandedDarkLock = Any()
 
     //This is the "current application" context, in this case the system context. It's only used to query PackageManager.
     private val context by lazy {
@@ -80,34 +70,34 @@ class DarqService(private val serviceType: DarqServiceConnectionProvider.Service
         IUiModeManager.Stub.asInterface(uiModeManagerProxy)
     }
 
-    private val locationManager by lazy {
-        val locationManagerProxy = SystemServiceHelper.getSystemService("location")
-        ILocationManager.Stub.asInterface(locationManagerProxy)
-    }
-
     //Packages to ignore foreground changes to. These include the launcher, recents provider and android itself.
     private val ignoredPackages = arrayOf("android", "com.android.systemui", getLauncherPackage(), getQuickstepPackage()).distinct().filterNotNull()
-
-    init {
-        mDispatcher.onServicePreSuperOnCreate()
-        mDispatcher.onServicePreSuperOnStart()
-    }
 
     /**
      *  Called from DarqServiceConnectionProvider when the service is bound to
      */
     override fun onBind() {
-        Handler(Looper.getMainLooper()).post {
-            mDispatcher.onServicePreSuperOnBind()
-        }
-        lifecycleScope.launch {
-            currentApp.collect {
-                if(it == null && !sendAppCloses) return@collect
-                setForceDarkEnabled(appWhitelist.contains(it))
+        handler.post {
+            if (!observerRegistered) {
+                try {
+                    activityManager.registerProcessObserver(processObserver)
+                    observerRegistered = true
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "Process observation is unavailable on this ROM", e)
+                } catch (e: RemoteException) {
+                    Log.w(TAG, "Could not register the process observer", e)
+                }
             }
-
+            if (forceDarkState.foregroundPackage == null) {
+                forceDarkState.foregroundPackage = getRunningAppProcesses()
+                    .firstNotNullOfOrNull {
+                        if (it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) {
+                            it.darqPackageName()?.takeUnless(ignoredPackages::contains)
+                        } else null
+                    }
+            }
+            applyForceDark()
         }
-        registerProcessObserver()
     }
 
 
@@ -115,15 +105,16 @@ class DarqService(private val serviceType: DarqServiceConnectionProvider.Service
      *  Called for each whitelisted app when the service is started (Binder limit is 1Mb so it
      *  has to be split for users with huge app lists)
      */
-    override fun setupWhitelist(isStart: Boolean, isEnd: Boolean, packageName: String) {
-        if(isStart){
-            tempAppList.clear()
-        }
-        tempAppList.add(packageName)
-        if(isEnd){
-            appWhitelist.clear()
-            appWhitelist.addAll(tempAppList)
-            tempAppList.clear()
+    override fun setupWhitelist(isStart: Boolean, isEnd: Boolean, packageName: String?) {
+        handler.post {
+            if (isStart) pendingWhitelist.clear()
+            if (!packageName.isNullOrBlank()) pendingWhitelist.add(packageName)
+            if (isEnd) {
+                forceDarkState.selectedPackages.clear()
+                forceDarkState.selectedPackages.addAll(pendingWhitelist)
+                pendingWhitelist.clear()
+                applyForceDark()
+            }
         }
     }
 
@@ -132,20 +123,17 @@ class DarqService(private val serviceType: DarqServiceConnectionProvider.Service
      *  is handled separately.
      */
     override fun setupSettings(ipcSetting: IPCSetting) {
-        if(ipcSetting.enabled != null) {
-            isEnabled = ipcSetting.enabled
-        }
-        if(ipcSetting.alwaysForceDark != null) {
-            isAlwaysForceDarkEnabled = ipcSetting.alwaysForceDark
-            if(isAlwaysForceDarkEnabled){
-                setForceDarkEnabled(true)
+        handler.post {
+            ipcSetting.enabled?.let { forceDarkState.enabled = it }
+            ipcSetting.alwaysForceDark?.let { forceDarkState.alwaysForceDark = it }
+            ipcSetting.sendAppCloses?.let { forceDarkState.sendAppCloses = it }
+            ipcSetting.oxygenForceDark?.let { setOxygenOSEntireWorldEnabled(it) }
+            ipcSetting.packageChange?.let {
+                if (it.enabled) forceDarkState.selectedPackages.add(it.packageName)
+                else forceDarkState.selectedPackages.remove(it.packageName)
             }
+            applyForceDark()
         }
-        if(ipcSetting.oxygenForceDark != null) {
-            isOxygenForceDarkEnabled = ipcSetting.oxygenForceDark
-            setOxygenOSEntireWorldEnabled(isOxygenForceDarkEnabled)
-        }
-        if(ipcSetting.sendAppCloses != null) sendAppCloses = ipcSetting.sendAppCloses
     }
 
     /**
@@ -153,41 +141,26 @@ class DarqService(private val serviceType: DarqServiceConnectionProvider.Service
      *  Only one of the fields should be non-null
      */
     override fun notifySettingsChange(ipcSetting: IPCSetting) {
-        when {
-            ipcSetting.enabled != null -> {
-                isEnabled = ipcSetting.enabled
-                if(!isEnabled) {
-                    setForceDarkEnabled(false)
-                }else{
-                    setForceDarkEnabled(isAlwaysForceDarkEnabled)
-                }
-            }
-            ipcSetting.alwaysForceDark != null -> {
-                isAlwaysForceDarkEnabled = ipcSetting.alwaysForceDark
-                setForceDarkEnabled(isAlwaysForceDarkEnabled)
-            }
-            ipcSetting.oxygenForceDark != null -> {
-                isOxygenForceDarkEnabled = ipcSetting.oxygenForceDark
-                setOxygenOSEntireWorldEnabled(isOxygenForceDarkEnabled)
-            }
-            ipcSetting.sendAppCloses != null -> sendAppCloses = ipcSetting.sendAppCloses
-            ipcSetting.packageChange != null -> {
-                with(ipcSetting.packageChange){
-                    if(enabled) appWhitelist.add(packageName)
-                    else appWhitelist.remove(packageName)
-                }
-            }
-        }
+        setupSettings(ipcSetting)
     }
 
     /**
      *  Sets Force Dark to a given value using the reflected SystemProperties rather than a shell
      *  command (for speed)
      */
-    private fun setForceDarkEnabled(enabled: Boolean) {
-        val currentValue = SystemProperties[FORCE_DARK_PROP]?.toBoolean() ?: false
-        if(currentValue == enabled) return
+    private fun applyForceDark() {
+        val enabled = forceDarkState.shouldForceDark
+        if (lastForceDarkWrite == enabled) return
+        if (SystemProperties.getBoolean(FORCE_DARK_PROP, false) == enabled) {
+            lastForceDarkWrite = enabled
+            return
+        }
         SystemProperties[FORCE_DARK_PROP] = enabled.toString()
+        if (SystemProperties.getBoolean(FORCE_DARK_PROP, false) == enabled) {
+            lastForceDarkWrite = enabled
+        } else {
+            Log.w(TAG, "The ROM rejected a Force Dark property update")
+        }
     }
 
     /**
@@ -207,16 +180,19 @@ class DarqService(private val serviceType: DarqServiceConnectionProvider.Service
      *  onForegroundActivitiesChanged(), where foregroundActivities = true when an app is opened.
      */
     private val processObserver = object : IProcessObserver.Stub() {
+        override fun onProcessStarted(
+            pid: Int, processUid: Int, packageUid: Int, packageName: String?, processName: String?
+        ) {
+            if (!packageName.isNullOrEmpty()) handler.post { startedProcesses[pid] = packageName }
+        }
+
         override fun onForegroundActivitiesChanged(pid: Int, uid: Int, foregroundActivities: Boolean) {
-            if(!isEnabled || isAlwaysForceDarkEnabled) return
-            val packageName = activityManager.getPackageNameForPid(pid) ?: return
-            if(ignoredPackages.contains(packageName)) return
-            if(foregroundActivities){
-                //New app open
-                currentApp.tryEmit(packageName)
-            }else if(!foregroundActivities && sendAppCloses && packageName == currentApp.value){
-                //App closed & user has chosen to send app closes
-                currentApp.tryEmit(null)
+            handler.post {
+                val packageName = startedProcesses[pid] ?: getRunningAppProcesses()
+                    .firstOrNull { it.pid == pid }?.darqPackageName() ?: return@post
+                if (packageName in ignoredPackages) return@post
+                forceDarkState.updateForeground(packageName, foregroundActivities)
+                applyForceDark()
             }
         }
 
@@ -225,13 +201,12 @@ class DarqService(private val serviceType: DarqServiceConnectionProvider.Service
         }
 
         override fun onProcessDied(pid: Int, uid: Int) {
-            //Don't care
+            handler.post {
+                val packageName = startedProcesses.remove(pid) ?: return@post
+                forceDarkState.updateForeground(packageName, foreground = false)
+                applyForceDark()
+            }
         }
-    }
-
-    private fun registerProcessObserver() {
-        activityManager.unregisterProcessObserver(processObserver)
-        activityManager.registerProcessObserver(processObserver)
     }
 
     /**
@@ -239,20 +214,30 @@ class DarqService(private val serviceType: DarqServiceConnectionProvider.Service
      *  libsu will simply kill the process as part of the restart
      */
     override fun destroy() {
-        activityManager.unregisterProcessObserver(processObserver)
-        mDispatcher.onServicePreSuperOnDestroy()
-        exitProcess(0)
+        handler.post {
+            if (observerRegistered) runCatching { activityManager.unregisterProcessObserver(processObserver) }
+            forceDarkState.enabled = false
+            applyForceDark()
+            exitProcess(0)
+        }
     }
 
     /**
      *  Finds a given PID in the running apps and returns its process name, which seems to be the
      *  package name.
      */
-    private fun IActivityManager.getPackageNameForPid(pid: Int): String? {
-        val rawName = runningAppProcesses.find { it.pid == pid }?.processName
-        return if(rawName?.contains(":") == true){
-            rawName.substring(0, rawName.indexOf(":"))
-        }else rawName
+    private fun ActivityManager.RunningAppProcessInfo.darqPackageName(): String? {
+        return pkgList?.singleOrNull() ?: processName?.substringBefore(':')
+    }
+
+    private fun getRunningAppProcesses(): List<ActivityManager.RunningAppProcessInfo> {
+        return try {
+            activityManager.runningAppProcesses.orEmpty()
+        } catch (_: SecurityException) {
+            emptyList()
+        } catch (_: RemoteException) {
+            emptyList()
+        }
     }
 
     /**
@@ -283,19 +268,24 @@ class DarqService(private val serviceType: DarqServiceConnectionProvider.Service
     /**
      *  Gets the device's last location, this is ONLY used with user consent.
      */
+    @SuppressLint("MissingPermission")
     override fun getLocation(): LatLng? {
-        return try {
-            val location = if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R){
-                locationManager.getLastLocation(null, BuildConfig.APPLICATION_ID, "darq") ?: return null
-            }else{
-                val locationRequestClass = Class.forName("android.location.LocationRequest")
-                val lastLocationMethod = locationManager::class.java.getMethod("getLastLocation", locationRequestClass, String::class.java)
-                val location = lastLocationMethod.invoke(locationManager, null, BuildConfig.APPLICATION_ID) as? Location
-                location ?: return null
-            }
+        // Location is read by the authorized root/shell service when the user enables it.
+        val token = Binder.clearCallingIdentity()
+        try {
+            val manager = context.getSystemService(LocationManager::class.java) ?: return null
+            val location = manager.getProviders(true).mapNotNull { provider ->
+                try {
+                    manager.getLastKnownLocation(provider)
+                } catch (_: SecurityException) {
+                    null
+                } catch (_: IllegalArgumentException) {
+                    null
+                }
+            }.maxByOrNull { it.elapsedRealtimeNanos } ?: return null
             return LatLng(location.latitude, location.longitude)
-        }catch (e: Throwable){
-            null
+        } finally {
+            Binder.restoreCallingIdentity(token)
         }
     }
 
@@ -303,8 +293,39 @@ class DarqService(private val serviceType: DarqServiceConnectionProvider.Service
      *  Sets the night mode using UiModeManager
      */
     override fun setNightMode(nightMode: Boolean) {
-        @Suppress("UsePropertyAccessSyntax")
-        uiModeManager.setNightMode(if(nightMode) 2 else 1)
+        val token = Binder.clearCallingIdentity()
+        try {
+            uiModeManager.setNightMode(if (nightMode) UiModeManager.MODE_NIGHT_YES else UiModeManager.MODE_NIGHT_NO)
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+    }
+
+    override fun getExpandedDarkPackages(): String? {
+        if (Build.VERSION.SDK_INT < 37) return null
+        val user = UserHandle.getUserHandleForUid(Binder.getCallingUid()).hashCode().toString()
+        return synchronized(expandedDarkLock) { readExpandedDarkPackages(user) }
+    }
+
+    override fun setExpandedDarkPackages(expected: String, updated: String): Boolean {
+        if (Build.VERSION.SDK_INT < 37 || !ExpandedDarkPackages.isPackageList(updated)) return false
+        val user = UserHandle.getUserHandleForUid(Binder.getCallingUid()).hashCode().toString()
+        return synchronized(expandedDarkLock) {
+            if (readExpandedDarkPackages(user) != expected) return@synchronized false
+            runSettingsCommand(user, "put", updated) != null && readExpandedDarkPackages(user) == updated
+        }
+    }
+
+    private fun readExpandedDarkPackages(user: String): String? =
+        runSettingsCommand(user, "get")?.trim()?.let { if (it == "null") "" else it }
+
+    private fun runSettingsCommand(user: String, operation: String, value: String? = null): String? {
+        val args = listOf("settings", "--user", user, operation, "system", EXPANDED_DARK_PACKAGES)
+        return runCatching {
+            val process = ProcessBuilder(args + listOfNotNull(value)).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            output.takeIf { process.waitFor() == 0 }
+        }.onFailure { Log.w(TAG, "Expanded dark settings are unavailable on this ROM", it) }.getOrNull()
     }
 
     /**
@@ -312,7 +333,7 @@ class DarqService(private val serviceType: DarqServiceConnectionProvider.Service
      */
     private fun runCommand(command: String): List<String> {
         ProcessBuilder().command("sh", "-c", command).start().run {
-            val lines = inputStream.bufferedReader().lines().toList()
+            val lines = inputStream.bufferedReader().use { it.readLines() }
             destroy()
             return lines
         }

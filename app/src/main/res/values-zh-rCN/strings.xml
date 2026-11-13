@@ -16,6 +16,8 @@
     <string name="item_advanced_options_content">更改总是使用强制深色和软件切换的设置</string>
     <string name="item_always_use_force_dark_title">总是使用强制深色</string>
     <string name="item_always_use_force_dark_content">忽略强制深色应用列表，并且为所有应用<b>一直启用</b>强制深色。</string>
+    <string name="item_expanded_dark_title">对选中应用使用扩展深色</string>
+    <string name="item_expanded_dark_content">需要设备支持 Android 17 的扩展深色主题。请先在系统深色主题设置中开启扩展模式。</string>
     <string name="item_send_app_closes_title">监听应用关闭</string>
     <string name="item_send_app_closes_content">当强制深色列表中的应用关闭时禁用强制深色。这会导致在应用间切换时强制深色不能被立即应用。</string>
     <string name="item_header_about">关于</string>

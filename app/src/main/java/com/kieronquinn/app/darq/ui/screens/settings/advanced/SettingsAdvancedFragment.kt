@@ -1,12 +1,12 @@
 package com.kieronquinn.app.darq.ui.screens.settings.advanced
 
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import com.kieronquinn.app.darq.R
 import com.kieronquinn.app.darq.databinding.FragmentSettingsAdvancedBinding
-import com.kieronquinn.app.darq.databinding.FragmentSettingsXposedBinding
 import com.kieronquinn.app.darq.model.settings.SettingsItem
 import com.kieronquinn.app.darq.ui.base.AutoExpandOnRotate
 import com.kieronquinn.app.darq.ui.base.BackAvailable
@@ -19,6 +19,13 @@ class SettingsAdvancedFragment : BaseSettingsFragment<FragmentSettingsAdvancedBi
 
     override val settingsItems by lazy {
         listOf<SettingsItem>(
+            SettingsItem.SwitchSetting(
+                R.drawable.ic_advanced_always_use_force_dark,
+                getString(R.string.item_expanded_dark_title),
+                getString(R.string.item_expanded_dark_content),
+                settings::expandedDark,
+                visible = { Build.VERSION.SDK_INT >= 37 }
+            ),
             SettingsItem.SwitchSetting(
                 R.drawable.ic_advanced_always_use_force_dark,
                 getString(R.string.item_always_use_force_dark_title),
