@@ -1,33 +1,8 @@
-name: DarQ 2.3.0 test release
-on:
-  push:
-    branches: [master]
-    paths: ['.github/workflows/darq-2.3.0.yml']
-permissions:
-  contents: write
+name: DarQ 2.3.0 test release (paused)
+on: workflow_dispatch
+permissions: {}
 jobs:
-  publish:
+  paused:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: afdee61fe8e1bfd4d89338140c9930d026aaf55a
-          persist-credentials: false
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Install Android SDK
-        run: sdkmanager --install 'platforms;android-37.0' 'build-tools;37.0.0'
-      - name: Build and test
-        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug
-      - name: Publish Android 17 test APK
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          apk=DarQ-2.3.0-android17-test.apk
-          cp app/build/outputs/apk/debug/app-debug.apk "$apk"
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify "$apk"
-          gh release view v2.3.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
-            gh release create v2.3.0 --repo "$GITHUB_REPOSITORY" --target afdee61fe8e1bfd4d89338140c9930d026aaf55a --title 'DarQ 2.3.0 · Android 17 测试版' --prerelease --notes 'Android 17 (API 37), updated Force Dark and Shizuku support. Debug-signed APK for testing.'
-          gh release upload v2.3.0 "$apk" --repo "$GITHUB_REPOSITORY"
+      - run: echo 'APK publishing is paused.'
