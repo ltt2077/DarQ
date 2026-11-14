@@ -1,7 +1,12 @@
 package com.kieronquinn.app.darq.ui.activities
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.util.AttributeSet
 import android.view.View
 import androidx.appcompat.view.menu.ListMenuItemView
@@ -23,6 +28,23 @@ class DarqActivity: MonetCompatActivity() {
             val lightStatusNav = resources.getBoolean(R.bool.lightStatusNav)
             setUseLightStatusNav(lightStatusNav)
         }
+    }
+
+    // MonetCompat 0.4.1 registers this receiver without an export flag.
+    override fun registerReceiver(
+        receiver: BroadcastReceiver?,
+        filter: IntentFilter,
+        broadcastPermission: String?,
+        scheduler: Handler?
+    ): Intent? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            filter.countActions() == 1 && filter.hasAction("android.intent.action.OVERLAY_CHANGED")
+        ) {
+            return super.registerReceiver(
+                receiver, filter, broadcastPermission, scheduler, Context.RECEIVER_NOT_EXPORTED
+            )
+        }
+        return super.registerReceiver(receiver, filter, broadcastPermission, scheduler)
     }
 
     /**

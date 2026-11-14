@@ -13,7 +13,7 @@ fun Context.secureSettingIntFlow(setting: String, default: Int) = callbackFlow {
     val onChange = {
         this.trySend(Settings.Secure.getInt(contentResolver, setting, default))
     }
-    val contentObserver = object: ContentObserver(Handler(Looper.myLooper()!!)) {
+    val contentObserver = object: ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
             super.onChange(selfChange)
             onChange.invoke()

@@ -3,6 +3,7 @@ package com.kieronquinn.app.darq
 import android.app.Application
 import android.app.DownloadManager
 import android.content.Context
+import android.util.Log
 import com.kieronquinn.app.darq.components.github.UpdateChecker
 import com.kieronquinn.app.darq.components.navigation.Navigation
 import com.kieronquinn.app.darq.components.navigation.NavigationImpl
@@ -77,7 +78,13 @@ class DarqApplication : Application() {
             androidContext(this@DarqApplication)
             modules(serviceModule, appComponentsModule, viewModelsModule, providersModule)
         }
-        Sui.init(packageName)
+        try {
+            Sui.init(packageName)
+        } catch (e: RuntimeException) {
+            Log.w("DarqApplication", "Optional Sui initialization failed", e)
+        } catch (e: LinkageError) {
+            Log.w("DarqApplication", "Sui is incompatible with this Android build", e)
+        }
         setupMonet()
     }
 
