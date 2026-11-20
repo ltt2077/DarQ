@@ -16,7 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 77991d5ae3b00c92ebce1bc0c1216ba2802148cb
           persist-credentials: false
       - uses: actions/setup-java@v5
         with:
@@ -34,20 +33,27 @@ jobs:
           printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$sdk" "$sdk" >> "$GITHUB_ENV"
       - name: Build and run unit tests
         run: ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
-      - name: Verify and publish APK
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DARQ_SOURCE: 77991d5ae3b00c92ebce1bc0c1216ba2802148cb
+      - name: Verify APK
         run: |
           apk=DarQ-2.3.0-android17-test.apk
           cp app/build/outputs/apk/debug/app-debug.apk "$apk"
           "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify "$apk"
           sha256sum "$apk" > "$apk.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: DarQ-2.3.0-android17
+          path: DarQ-2.3.0-android17-test.apk*
+          if-no-files-found: error
+      - name: Publish APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk=DarQ-2.3.0-android17-test.apk
           cat > release-notes.md <<'NOTES'
           DarQ 2.3.0 Android 17 测试版，包含启动广播注册和 Sui 初始化修补。Android 17 构建与单元测试通过，荣耀 WIN RT2 的启动和强制深色效果有待实机验证。
 
           这是调试签名的安装包。包名为 `io.github.ltt2077.darq`，可与原版 DarQ 并存。如果已装此前的 DarQ 测试包且系统提示签名不一致，请先备份设置，再卸载旧测试包并安装这个版本。
           NOTES
           gh release create v2.3.0 "$apk" "$apk.sha256" \
-            --repo "$GITHUB_REPOSITORY" --target "$DARQ_SOURCE" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title 'DarQ 2.3.0 · Android 17 测试版' --prerelease --notes-file release-notes.md
